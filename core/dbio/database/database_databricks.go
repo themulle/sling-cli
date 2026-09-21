@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -830,6 +831,46 @@ func (conn *DatabricksConn) getOrCreateVolume(schema string) (internalVolume str
 	return volumePath, nil
 }
 
+func (conn *DatabricksConn) fetchOAuthToken() (string, error) {
+	workspaceURL, err := conn.unityCatalogURL()
+	if err != nil {
+		return "", err
+	}
+	data := url.Values{}
+	data.Set("grant_type", "client_credentials")
+	data.Set("client_id", conn.ClientID)
+	data.Set("client_secret", conn.ClientSecret)
+	data.Set("scope", "all-apis")
+
+	req, err := http.NewRequest(http.MethodPost, workspaceURL+"/oidc/v1/token", strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", g.Error("databricks OAuth token endpoint returned %d: %s", resp.StatusCode, string(body))
+	}
+	var res struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return "", err
+	}
+	if res.AccessToken == "" {
+		return "", g.Error("empty access_token received from Databricks OAuth endpoint")
+	}
+	return res.AccessToken, nil
+}
+
 func (conn *DatabricksConn) getAuthToken() string {
 	token := conn.GetProp("token")
 	if token == "" {
@@ -840,6 +881,14 @@ func (conn *DatabricksConn) getAuthToken() string {
 	}
 	if token == "" {
 		token = os.Getenv("DATABRICKS_TOKEN")
+	}
+	if token == "" && conn.ClientID != "" && conn.ClientSecret != "" {
+		if oauthToken, err := conn.fetchOAuthToken(); err == nil && oauthToken != "" {
+			conn.SetProp("token", oauthToken)
+			token = oauthToken
+		} else if err != nil {
+			g.Debug("databricks OAuth M2M token fetch failed: %s", err)
+		}
 	}
 	return token
 }
@@ -1488,7 +1537,7 @@ func (conn *DatabricksConn) databricksGETJSON(path string, dest any) error {
 	if err != nil {
 		return err
 	}
-	token := conn.GetProp("token")
+	token := conn.getAuthToken()
 	if token == "" {
 		return g.Error("databricks token is required")
 	}
@@ -1523,7 +1572,7 @@ func (conn *DatabricksConn) resolveZerobusEndpoint() error {
 		conn.ZerobusEndpoint = v
 		return nil
 	}
-	if conn.GetProp("host") == "" || conn.GetProp("token") == "" {
+	if conn.GetProp("host") == "" || conn.getAuthToken() == "" {
 		return g.Error("zerobus_endpoint is required for copy_method: zerobus (the shard URL, not the workspace host)")
 	}
 
@@ -1593,20 +1642,26 @@ func (conn *DatabricksConn) validateZerobusConfig() error {
 }
 
 func (conn *DatabricksConn) unityCatalogURL() (string, error) {
-	host := conn.GetProp("host")
-	if host == "" {
-		host = conn.GetProp("DATABRICKS_HOST")
+	rawHost := conn.GetProp("host")
+	if rawHost == "" {
+		rawHost = conn.GetProp("DATABRICKS_HOST")
 	}
-	if host == "" {
-		host = os.Getenv("DATABRICKS_HOST")
+	if rawHost == "" {
+		rawHost = os.Getenv("DATABRICKS_HOST")
 	}
-	host = strings.TrimPrefix(host, "https://")
+
+	scheme := "https"
+	if strings.HasPrefix(rawHost, "http://") || conn.GetProp("protocol") == "http" || conn.GetProp("use_ssl") == "false" || conn.GetProp("ssl") == "false" {
+		scheme = "http"
+	}
+
+	host := strings.TrimPrefix(rawHost, "https://")
 	host = strings.TrimPrefix(host, "http://")
 	host = strings.TrimRight(host, "/")
 	if host == "" {
 		return "", g.Error("databricks host is required")
 	}
-	return "https://" + host, nil
+	return scheme + "://" + host, nil
 }
 
 func (conn *DatabricksConn) zerobusTableName(table Table) string {
@@ -1709,6 +1764,11 @@ func (conn *DatabricksConn) CopyViaZerobus(table Table, df *iop.Dataflow) (count
 	}
 	defer stream.Close()
 
+	var initialCount int64
+	if conn.db != nil {
+		initialCount, _ = conn.GetCount(table.FullName())
+	}
+
 	count, err = ingestZerobusFlow(conn, df, stream, arrowSchema, tgtCols, srcIdx)
 	if err != nil {
 		unacked, _ := stream.GetUnackedBatches()
@@ -1726,16 +1786,17 @@ func (conn *DatabricksConn) CopyViaZerobus(table Table, df *iop.Dataflow) (count
 		deadline := time.Now().Add(30 * time.Second)
 		delay := 500 * time.Millisecond
 		var visible int64
+		expectedCount := uint64(initialCount) + count
 		for {
 			visible, err = conn.GetCount(table.FullName())
-			if err == nil && uint64(visible) >= count {
+			if err == nil && uint64(visible) >= expectedCount {
 				break
 			}
 			if time.Now().After(deadline) {
 				if err != nil {
 					g.Warn("zerobus rows not yet visible in SQL warehouse for %s: %v", table.FullName(), err)
 				} else {
-					g.Warn("zerobus SQL warehouse count is %d after streaming %d rows into %s (warehouse snapshot may lag Delta commit)", visible, count, table.FullName())
+					g.Warn("zerobus SQL warehouse count is %d (expected >= %d) after streaming %d rows into %s (warehouse snapshot may lag Delta commit)", visible, expectedCount, count, table.FullName())
 				}
 				break
 			}
@@ -1862,9 +1923,6 @@ func ingestZerobusFlow(conn *DatabricksConn, df *iop.Dataflow, stream zerobusStr
 
 		batchBytes, err := SerializeRecordToIPC(arrowSchema, record, conn.IPCCompression)
 		record.Release()
-		for _, arr := range arrays {
-			arr.Release()
-		}
 		releaseBuilders()
 		resetBuilders()
 		rowsInBatch = 0

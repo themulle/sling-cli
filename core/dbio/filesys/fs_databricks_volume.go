@@ -29,13 +29,13 @@ const databricksVolumeRetryBuffer = 8 * 1024 * 1024
 // Alias:         databricks://Volumes/<catalog>/<schema>/<volume>/<path>
 type DatabricksVolumeFileSysClient struct {
 	BaseFileSysClient
-	client     *http.Client
-	scheme     string
-	host       string
-	token      string
-	catalog    string
-	schema     string
-	volume     string
+	client  *http.Client
+	scheme  string
+	host    string
+	token   string
+	catalog string
+	schema  string
+	volume  string
 }
 
 type databricksDirListResp struct {
@@ -193,12 +193,28 @@ func stripDatabricksVolumePrefix(host, path string) string {
 			cleaned = append(cleaned, p)
 		}
 	}
+	if len(cleaned) > 0 && strings.EqualFold(cleaned[0], "Volumes") {
+		// e.g. //custom.host/Volumes/cat/schema/vol/file -> strip Volumes, cat, schema, vol (4 segments)
+		if len(cleaned) >= 4 {
+			return strings.Join(cleaned[4:], "/")
+		}
+		return ""
+	}
 	if strings.EqualFold(host, "Volumes") {
+		// e.g. //Volumes/cat/schema/vol/file -> strip cat, schema, vol (3 segments)
 		if len(cleaned) >= 3 {
 			return strings.Join(cleaned[3:], "/")
 		}
 		return ""
 	}
+	if looksLikeHost(host) {
+		// e.g. //custom.host/cat/schema/vol/file -> strip cat, schema, vol (3 segments)
+		if len(cleaned) >= 3 {
+			return strings.Join(cleaned[3:], "/")
+		}
+		return ""
+	}
+	// e.g. //cat/schema/vol/file (host is catalog) -> strip schema, vol (2 segments)
 	if len(cleaned) >= 2 {
 		return strings.Join(cleaned[2:], "/")
 	}
