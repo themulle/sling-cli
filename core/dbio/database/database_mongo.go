@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"time"
@@ -253,14 +254,36 @@ func (conn *MongoDBConn) normalizeFilterValue(key, value string) any {
 	value = strings.Trim(value, "'")
 
 	if m := shellCtorRegex.FindStringSubmatch(value); m != nil {
-		value = m[2]
+		ctor := m[1]
+		inner := m[2]
+		switch ctor {
+		case "ISODate":
+			if t, ok := parseISODateString(inner); ok {
+				return t
+			}
+			return inner
+		case "ObjectId":
+			if oid, err := primitive.ObjectIDFromHex(inner); err == nil {
+				return oid
+			}
+			return inner
+		}
 	}
 
 	if key == "_id" || strings.HasSuffix(key, "_id") {
 		return conn.processObjectIDValue(value)
 	}
 
-	return conn.processMongoFilter(value)
+	if strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
+		var jsonMap map[string]any
+		if err := json.Unmarshal([]byte(value), &jsonMap); err == nil {
+			if val, ok := parseExtendedJSON(jsonMap); ok {
+				return val
+			}
+		}
+	}
+
+	return value
 }
 
 // processObjectIDValue handles ObjectID conversion for _id fields
