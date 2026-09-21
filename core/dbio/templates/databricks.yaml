@@ -27,6 +27,14 @@ core:
       'datetimeRebaseMode' = 'CORRECTED',
       'int96RebaseMode' = 'CORRECTED'
     )
+  merge_from_volume_parquet: |
+    MERGE INTO {tgt_table} tgt
+    USING (
+      SELECT {src_fields} FROM read_files('{volume_path}', format => 'parquet')
+    ) src
+    ON ({src_tgt_pk_equal})
+    WHEN MATCHED THEN UPDATE SET {set_fields}
+    WHEN NOT MATCHED THEN INSERT ({insert_fields}) VALUES ({insert_values})
   copy_from_volume_csv: |
     COPY INTO {table} ({tgt_columns})
     FROM '{volume_path}'

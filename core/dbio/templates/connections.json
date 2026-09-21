@@ -1085,8 +1085,8 @@
         },
         "copy_method": {
           "type": "string",
-          "description": "Bulk load method. stage uses Unity Catalog volumes + COPY INTO (default). aws uses S3. zerobus streams Arrow RecordBatches into an existing Delta table (Beta).",
-          "enum": ["stage", "aws", "zerobus"],
+          "description": "Bulk load method. auto dynamically chooses stage for backfill/initial loads and zerobus for deltas. stage uses Unity Catalog volumes + COPY INTO / MERGE (default). aws uses S3. zerobus streams Arrow RecordBatches into an existing Delta table (Beta).",
+          "enum": ["auto", "stage", "aws", "zerobus"],
           "default": "stage"
         },
         "zerobus_endpoint": {
