@@ -1051,7 +1051,7 @@ func (conn *DatabricksConn) MergeFromVolume(targetTable string, volumePath strin
 		srcFields = append(srcFields, qName)
 		insertFields = append(insertFields, qName)
 		insertValues = append(insertValues, "src."+qName)
-		if !pkCols.Contains(col.Name) {
+		if pkCols.GetColumn(col.Name) == nil {
 			setFields = append(setFields, g.F("%s = src.%s", qName, qName))
 		}
 	}

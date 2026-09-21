@@ -203,7 +203,7 @@ func (t *TaskExecution) ReadFromDB(cfg *Config, srcConn database.Connection) (df
 
 		// Spatial columns (geometry, geography) are not supported with Change Tracking
 		for _, col := range sTable.Columns {
-			if col.Type.IsGeometry() || strings.EqualFold(col.Type.String(), "geometry") || strings.EqualFold(col.Type.String(), "geography") {
+			if col.Type.IsGeometry() || strings.EqualFold(string(col.Type), "geometry") || strings.EqualFold(string(col.Type), "geography") || strings.EqualFold(col.DbType, "geometry") || strings.EqualFold(col.DbType, "geography") {
 				return t.df, g.Error("SQL Server Change Tracking does not currently support spatial column '%s' in table %s", col.Name, sTable.FDQN())
 			}
 		}
