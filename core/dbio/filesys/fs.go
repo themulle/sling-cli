@@ -287,6 +287,9 @@ func NormalizeURI(fs FileSysClient, uri string) string {
 				return uri
 			}
 		}
+		if strings.HasPrefix(uri, "/Volumes/") {
+			return "databricks-volume://" + strings.TrimPrefix(uri, "/Volumes/")
+		}
 		return fs.Prefix("/") + strings.TrimLeft(strings.TrimPrefix(uri, fs.Prefix()), "/")
 	case dbio.TypeFileS3, dbio.TypeFileGoogle:
 		// For S3/GCS, if URI already has the scheme prefix (e.g., s3://bucket/path),
@@ -1169,7 +1172,14 @@ func Delete(fs FileSysClient, uri string) (err error) {
 			return g.Error("invalid uri / path for overwriting (root): %s", uri)
 		}
 	case dbio.TypeFileDatabricksVolume:
-		if len(pArr) <= 3 {
+		minLen := 2
+		if strings.EqualFold(host, "Volumes") || (len(pArr) > 0 && strings.EqualFold(pArr[0], "Volumes")) {
+			minLen = 3
+			if len(pArr) > 0 && strings.EqualFold(pArr[0], "Volumes") {
+				minLen = 4
+			}
+		}
+		if len(pArr) <= minLen {
 			return g.Error("invalid uri / path for deleting (volume): %s", uri)
 		}
 	}

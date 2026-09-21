@@ -1469,11 +1469,6 @@ func (conn *DatabricksConn) CopyViaZerobus(table Table, df *iop.Dataflow) (count
 	if err != nil {
 		return 0, err
 	}
-	for i := range tgtCols {
-		if v := tgtCols[i].Metadata["is_nullable"]; v != "" {
-			tgtCols[i].SetMetadata(string(iop.ColMetaNullable), v)
-		}
-	}
 
 	srcIdx, err := alignZerobusSource(df.Columns, tgtCols)
 	if err != nil {
@@ -1528,6 +1523,7 @@ func (conn *DatabricksConn) CopyViaZerobus(table Table, df *iop.Dataflow) (count
 	if count > 0 && conn.db != nil {
 		_, _ = conn.Exec("REFRESH TABLE " + table.FullName() + env.NoDebugKey)
 		deadline := time.Now().Add(30 * time.Second)
+		delay := 500 * time.Millisecond
 		var visible int64
 		for {
 			visible, err = conn.GetCount(table.FullName())
@@ -1536,11 +1532,16 @@ func (conn *DatabricksConn) CopyViaZerobus(table Table, df *iop.Dataflow) (count
 			}
 			if time.Now().After(deadline) {
 				if err != nil {
-					return count, g.Error(err, "zerobus rows not yet visible in SQL warehouse for %s", table.FullName())
+					g.Warn("zerobus rows not yet visible in SQL warehouse for %s: %v", table.FullName(), err)
+				} else {
+					g.Warn("zerobus SQL warehouse count is %d after streaming %d rows into %s (warehouse snapshot may lag Delta commit)", visible, count, table.FullName())
 				}
-				return count, g.Error("zerobus SQL warehouse count is %d after streaming %d rows into %s", visible, count, table.FullName())
+				break
 			}
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(delay)
+			if delay < 2*time.Second {
+				delay = time.Duration(float64(delay) * 1.5)
+			}
 		}
 	}
 
@@ -1578,6 +1579,17 @@ func alignZerobusSource(src, tgt iop.Columns) ([]int, error) {
 }
 
 func ingestZerobusFlow(conn *DatabricksConn, df *iop.Dataflow, stream zerobusStream, arrowSchema *arrow.Schema, tgtCols iop.Columns, srcIdx []int) (count uint64, err error) {
+	if arrowSchema == nil || len(arrowSchema.Fields()) != len(tgtCols) {
+		fieldsCount := 0
+		if arrowSchema != nil {
+			fieldsCount = len(arrowSchema.Fields())
+		}
+		return 0, g.Error("mismatched schema fields count (%d) and target columns count (%d)", fieldsCount, len(tgtCols))
+	}
+	if len(srcIdx) != len(tgtCols) {
+		return 0, g.Error("mismatched source index count (%d) and target columns count (%d)", len(srcIdx), len(tgtCols))
+	}
+
 	mem := memory.NewGoAllocator()
 	batchSize := conn.BatchSize
 	if batchSize <= 0 {
@@ -1769,6 +1781,9 @@ func zerobusDecimalPrecisionScale(col iop.Column) (prec, scale int) {
 
 func columnZerobusNullable(col iop.Column) bool {
 	if col.Metadata != nil {
+		if v, ok := col.Metadata[string(iop.ColMetaNullable)]; ok {
+			return v == "true" || strings.EqualFold(v, "yes")
+		}
 		if v, ok := col.Metadata["is_nullable"]; ok {
 			return v == "true" || strings.EqualFold(v, "yes")
 		}

@@ -346,3 +346,49 @@ func TestCopyViaZerobus_MissingEndpoint(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "zerobus_endpoint")
 }
+
+func TestColumnZerobusNullable(t *testing.T) {
+	// Checks ColMetaNullable ("nullable")
+	col1 := iop.Column{Name: "c1", Metadata: map[string]string{string(iop.ColMetaNullable): "false"}}
+	assert.False(t, columnZerobusNullable(col1))
+
+	col2 := iop.Column{Name: "c2", Metadata: map[string]string{string(iop.ColMetaNullable): "true"}}
+	assert.True(t, columnZerobusNullable(col2))
+
+	// Checks "is_nullable"
+	col3 := iop.Column{Name: "c3", Metadata: map[string]string{"is_nullable": "no"}}
+	assert.False(t, columnZerobusNullable(col3))
+
+	col4 := iop.Column{Name: "c4", Metadata: map[string]string{"is_nullable": "YES"}}
+	assert.True(t, columnZerobusNullable(col4))
+
+	// Default without metadata is nullable
+	col5 := iop.Column{Name: "c5"}
+	assert.True(t, columnZerobusNullable(col5))
+}
+
+func TestIngestZerobusFlow_SchemaMismatch(t *testing.T) {
+	conn := newTestDatabricksConn()
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "c1", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+
+	// Target columns has 2 columns, but schema only has 1
+	tgtCols := iop.Columns{
+		{Name: "c1", Type: iop.BigIntType},
+		{Name: "c2", Type: iop.StringType},
+	}
+	srcIdx := []int{0, 1}
+
+	_, err := ingestZerobusFlow(conn, nil, nil, schema, tgtCols, srcIdx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mismatched schema fields count")
+
+	// Source index count mismatch
+	tgtCols2 := iop.Columns{{Name: "c1", Type: iop.BigIntType}}
+	srcIdx2 := []int{0, 1}
+	_, err = ingestZerobusFlow(conn, nil, nil, schema, tgtCols2, srcIdx2)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mismatched source index count")
+}
+

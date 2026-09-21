@@ -36,7 +36,6 @@ type DatabricksVolumeFileSysClient struct {
 	catalog    string
 	schema     string
 	volume     string
-	basePrefix string
 }
 
 type databricksDirListResp struct {
@@ -214,6 +213,13 @@ func volumeURIFromAPIPath(apiPath string) string {
 
 // GetPath converts a uri into the internal volume path starting with /Volumes/...
 func (fs *DatabricksVolumeFileSysClient) GetPath(uri string) (volumePath string, err error) {
+	if strings.HasPrefix(uri, "/Volumes/") {
+		parts := strings.Split(strings.Trim(uri, "/"), "/")
+		if len(parts) >= 4 {
+			return "/" + strings.Join(parts, "/"), nil
+		}
+	}
+
 	uri = NormalizeURI(fs, uri)
 
 	clean := stripScheme(uri)
