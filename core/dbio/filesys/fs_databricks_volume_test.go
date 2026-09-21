@@ -60,8 +60,12 @@ func TestDatabricksVolume_URLParsing(t *testing.T) {
 			expectedPath: "/Volumes/my_cat/my_schema/my_vol/folder/data.parquet",
 		},
 		{
-			url:          "/Volumes/my_cat/my_schema/my_vol/data.parquet",
-			expectedPath: "/Volumes/my_cat/my_schema/my_vol/data.parquet",
+			url:          "databricks-volume://custom.host/Volumes/cat/schema/vol/file.csv",
+			expectedPath: "/Volumes/cat/schema/vol/file.csv",
+		},
+		{
+			url:          "databricks-volume://custom.host/cat/schema/vol/file.csv",
+			expectedPath: "/Volumes/cat/schema/vol/file.csv",
 		},
 		{
 			url:     "databricks-volume://only_cat",
@@ -454,6 +458,10 @@ func TestDatabricksVolume_DeleteGuard(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid uri / path for deleting (volume)")
 
+	err = Delete(client, "databricks-volume://custom.host/my_cat/my_schema/my_vol")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid uri / path for deleting (volume)")
+
 	// Files directly under volume root should pass the Delete safeguard (guard should not reject them)
 	// (they will fail later when trying to reach mock server, but not with the volume guard error)
 	err = Delete(client, "databricks-volume://my_cat/my_schema/my_vol/file.csv")
@@ -466,4 +474,3 @@ func TestDatabricksVolume_DeleteGuard(t *testing.T) {
 		assert.NotContains(t, err.Error(), "invalid uri / path for deleting (volume)")
 	}
 }
-

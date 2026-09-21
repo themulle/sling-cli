@@ -171,3 +171,24 @@ func TestCopyMethodAuto_Selection(t *testing.T) {
 	assert.Equal(t, "auto", conn.CopyMethod)
 	assert.NotEmpty(t, conn.ZerobusEndpoint)
 }
+
+func TestUnityCatalogURL_Scheme(t *testing.T) {
+	conn := newTestDatabricksConn()
+	conn.SetProp("host", "http://127.0.0.1:8080/")
+	u, err := conn.unityCatalogURL()
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:8080", u)
+
+	conn2 := newTestDatabricksConn()
+	conn2.SetProp("host", "adb-test.azuredatabricks.net")
+	u2, err := conn2.unityCatalogURL()
+	require.NoError(t, err)
+	assert.Equal(t, "https://adb-test.azuredatabricks.net", u2)
+
+	conn3 := newTestDatabricksConn()
+	conn3.SetProp("host", "localhost:8080")
+	conn3.SetProp("protocol", "http")
+	u3, err := conn3.unityCatalogURL()
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:8080", u3)
+}

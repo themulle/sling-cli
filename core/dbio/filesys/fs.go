@@ -1172,7 +1172,19 @@ func Delete(fs FileSysClient, uri string) (err error) {
 			return g.Error("invalid uri / path for overwriting (root): %s", uri)
 		}
 	case dbio.TypeFileDatabricksVolume:
+		if gp, ok := fs.(interface{ GetPath(string) (string, error) }); ok {
+			if vPath, err := gp.GetPath(uri); err == nil {
+				parts := strings.Split(strings.Trim(vPath, "/"), "/")
+				if len(parts) <= 4 {
+					return g.Error("invalid uri / path for deleting (volume): %s", uri)
+				}
+				break
+			}
+		}
 		minLen := 2
+		if looksLikeHost(host) && !strings.EqualFold(host, "Volumes") {
+			minLen = 3
+		}
 		if strings.EqualFold(host, "Volumes") || (len(pArr) > 0 && strings.EqualFold(pArr[0], "Volumes")) {
 			minLen = 3
 			if len(pArr) > 0 && strings.EqualFold(pArr[0], "Volumes") {
