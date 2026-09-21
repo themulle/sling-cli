@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -224,6 +225,19 @@ func (conn *DatabricksConn) BulkImportFlow(tableFName string, df *iop.Dataflow) 
 			return 0, g.Error(err, "could not parse table name: "+tableFName)
 		}
 		return conn.CopyViaZerobus(table, df)
+	case "auto":
+		table, err := ParseTableName(tableFName, conn.Type)
+		if err != nil {
+			return 0, g.Error(err, "could not parse table name: "+tableFName)
+		}
+		// If Zerobus endpoint is configured and table already exists, stream via Zerobus
+		if conn.ZerobusEndpoint != "" {
+			exists, _ := conn.TableExists(table)
+			if exists {
+				return conn.CopyViaZerobus(table, df)
+			}
+		}
+		// Otherwise, fall through to volume-based loading (backfill / initial load)
 	}
 
 	// Try volume-based loading as fallback
@@ -816,8 +830,131 @@ func (conn *DatabricksConn) getOrCreateVolume(schema string) (internalVolume str
 	return volumePath, nil
 }
 
-// VolumePUT uploads a local file to a Databricks volume using SQL commands
+func (conn *DatabricksConn) getAuthToken() string {
+	token := conn.GetProp("token")
+	if token == "" {
+		token = conn.GetProp("password")
+	}
+	if token == "" {
+		token = conn.GetProp("DATABRICKS_TOKEN")
+	}
+	if token == "" {
+		token = os.Getenv("DATABRICKS_TOKEN")
+	}
+	return token
+}
+
+// volumePutHTTP uploads a local file to a Databricks volume using the Files REST API.
+// It checks if the file already exists with matching size to avoid re-uploads,
+// and retries transient network errors with exponential backoff.
+func (conn *DatabricksConn) volumePutHTTP(localFilePath, volumePath string) error {
+	workspaceURL, err := conn.unityCatalogURL()
+	if err != nil {
+		return err
+	}
+
+	token := conn.getAuthToken()
+	if token == "" {
+		return g.Error("databricks token is required for volume HTTP upload")
+	}
+
+	fi, err := os.Stat(localFilePath)
+	if err != nil {
+		return g.Error(err, "could not stat local file: %s", localFilePath)
+	}
+	localSize := fi.Size()
+	fileName := filepath.Base(localFilePath)
+
+	client := &http.Client{
+		Timeout: 30 * time.Minute,
+	}
+
+	ctx := conn.context.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// 1. Resumable Upload Check: check if file exists with matching size
+	headURL := fmt.Sprintf("%s/api/2.0/fs/files%s", workspaceURL, volumePath)
+	headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, headURL, nil)
+	if err == nil {
+		headReq.Header.Set("Authorization", "Bearer "+token)
+		if resp, headErr := client.Do(headReq); headErr == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && resp.ContentLength == localSize {
+				g.Info("skipping upload of %s: already exists in volume with matching size (%s)", fileName, humanize.Bytes(uint64(localSize)))
+				return nil
+			}
+		}
+	}
+
+	// 2. Upload with retry loop
+	uploadURL := fmt.Sprintf("%s/api/2.0/fs/files%s?overwrite=true", workspaceURL, volumePath)
+	maxRetries := 5
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<attempt) * 500 * time.Millisecond
+			g.Warn("retrying upload of %s (attempt %d/%d after %v): %v", fileName, attempt+1, maxRetries, backoff, lastErr)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		f, err := os.Open(localFilePath)
+		if err != nil {
+			return g.Error(err, "could not open local file: %s", localFilePath)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, f)
+		if err != nil {
+			f.Close()
+			return g.Error(err, "could not build upload request")
+		}
+
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = localSize
+
+		resp, err := client.Do(req)
+		f.Close()
+
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			g.Debug("successfully uploaded %s to volume (%s)", fileName, humanize.Bytes(uint64(localSize)))
+			return nil
+		}
+
+		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+			// Non-retriable client error
+			return g.Error(lastErr, "upload failed for %s", volumePath)
+		}
+	}
+
+	return g.Error(lastErr, "upload failed after %d retries for %s", maxRetries, volumePath)
+}
+
+// VolumePUT uploads a local file to a Databricks volume using the Files REST API,
+// with chunk-level retries and resumable size checks. Falls back to SQL driver PUT if REST is unavailable.
 func (conn *DatabricksConn) VolumePUT(folderPath, localFilePath, volumePath string) error {
+	// Attempt HTTP upload via Databricks Files REST API first
+	if err := conn.volumePutHTTP(localFilePath, volumePath); err == nil {
+		return nil
+	} else {
+		g.Debug("Databricks Volume HTTP PUT failed (%v), falling back to SQL driver PUT", err)
+	}
+
 	sql := g.R(
 		conn.template.Core["put_into_volume"],
 		"local_file", localFilePath,
@@ -834,7 +971,62 @@ func (conn *DatabricksConn) VolumePUT(folderPath, localFilePath, volumePath stri
 		return g.Error(err, "could not PUT file %s to volume path %s", localFilePath, volumePath)
 	}
 
-	// g.Debug("Successfully uploaded %s to %s", localFilePath, volumePath)
+	return nil
+}
+
+// MergeFromVolume executes an atomic MERGE INTO target table using Parquet files directly from a Volume
+func (conn *DatabricksConn) MergeFromVolume(targetTable string, volumePath string, columns iop.Columns, pkFields []string) error {
+	tgtCols, err := conn.GetColumns(targetTable)
+	if err != nil {
+		return g.Error(err, "could not get target table columns for %s", targetTable)
+	}
+
+	pkCols, err := conn.ValidateColumnNames(tgtCols, pkFields)
+	if err != nil {
+		return g.Error(err, "PK columns mismatch")
+	}
+
+	var pkEqualFields []string
+	for _, pkName := range pkCols.Names() {
+		col := tgtCols.GetColumn(pkName)
+		if col == nil {
+			return g.Error("did not find target PK column: %s", pkName)
+		}
+		qName := conn.Quote(col.Name)
+		pkEqualFields = append(pkEqualFields, g.F("tgt.%s = src.%s", qName, qName))
+	}
+
+	var setFields, insertFields, insertValues, srcFields []string
+	for _, col := range tgtCols {
+		qName := conn.Quote(col.Name)
+		srcFields = append(srcFields, qName)
+		insertFields = append(insertFields, qName)
+		insertValues = append(insertValues, "src."+qName)
+		if !pkCols.Contains(col.Name) {
+			setFields = append(setFields, g.F("%s = src.%s", qName, qName))
+		}
+	}
+
+	if len(setFields) == 0 {
+		// all columns are PKs
+		setFields = append(setFields, pkEqualFields...)
+	}
+
+	sql := g.R(
+		conn.template.Core["merge_from_volume_parquet"],
+		"tgt_table", targetTable,
+		"volume_path", volumePath,
+		"src_fields", strings.Join(srcFields, ", "),
+		"src_tgt_pk_equal", strings.Join(pkEqualFields, " AND "),
+		"set_fields", strings.Join(setFields, ", "),
+		"insert_fields", strings.Join(insertFields, ", "),
+		"insert_values", strings.Join(insertValues, ", "),
+	)
+
+	_, err = conn.Exec(sql)
+	if err != nil {
+		return g.Error(err, "Error executing MERGE INTO from volume")
+	}
 	return nil
 }
 
@@ -962,8 +1154,7 @@ func (conn *DatabricksConn) CopyViaVolume(table Table, df *iop.Dataflow) (count 
 	fileReadyChn := make(chan filesys.FileReady, 10000)
 	fileFormat := dbio.FileType(conn.GetProp("format"))
 	if !g.In(fileFormat, dbio.FileTypeCsv, dbio.FileTypeParquet) {
-		fileFormat = dbio.FileTypeCsv
-		// fileFormat = dbio.FileTypeParquet // error-prone, type mismatch
+		fileFormat = dbio.FileTypeParquet
 	}
 
 	go func() {
@@ -983,6 +1174,10 @@ func (conn *DatabricksConn) CopyViaVolume(table Table, df *iop.Dataflow) (count 
 		config.FileMaxRows = cast.ToInt64(conn.GetProp("file_max_rows"))
 		if config.FileMaxRows == 0 {
 			config.FileMaxRows = 500000
+		}
+		config.FileMaxBytes = cast.ToInt64(conn.GetProp("file_max_bytes"))
+		if config.FileMaxBytes == 0 {
+			config.FileMaxBytes = 104857600 // 100 MiB default chunk size
 		}
 
 		switch fileFormat {
@@ -1399,11 +1594,17 @@ func (conn *DatabricksConn) validateZerobusConfig() error {
 
 func (conn *DatabricksConn) unityCatalogURL() (string, error) {
 	host := conn.GetProp("host")
+	if host == "" {
+		host = conn.GetProp("DATABRICKS_HOST")
+	}
+	if host == "" {
+		host = os.Getenv("DATABRICKS_HOST")
+	}
 	host = strings.TrimPrefix(host, "https://")
 	host = strings.TrimPrefix(host, "http://")
 	host = strings.TrimRight(host, "/")
 	if host == "" {
-		return "", g.Error("databricks host is required for copy_method: zerobus")
+		return "", g.Error("databricks host is required")
 	}
 	return "https://" + host, nil
 }
