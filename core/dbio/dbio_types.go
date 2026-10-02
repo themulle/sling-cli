@@ -70,6 +70,7 @@ const (
 	TypeDbSnowflake     Type = "snowflake"
 	TypeDbDatabricks    Type = "databricks"
 	TypeDbSQLite        Type = "sqlite"
+	TypeDbDBase         Type = "dbase"
 	TypeDbD1            Type = "d1"
 	TypeDbDuckDb        Type = "duckdb"
 	TypeDbDuckLake      Type = "ducklake"
@@ -82,15 +83,19 @@ const (
 	TypeDbClickhouse    Type = "clickhouse"
 	TypeDbMongoDB       Type = "mongodb"
 	TypeDbElasticsearch Type = "elasticsearch"
+	TypeDbOpenSearch    Type = "opensearch"
 	TypeDbPrometheus    Type = "prometheus"
 	TypeDbProton        Type = "proton"
 	TypeDbAthena        Type = "athena"
 	TypeDbIceberg       Type = "iceberg"
+	TypeDbLanceDB       Type = "lancedb"
 	TypeDbAzureTable    Type = "azuretable"
 	TypeDbExasol        Type = "exasol"
 	TypeDbArrowDBC      Type = "adbc"
 	TypeDbODBC          Type = "odbc"
 	TypeDbScyllaDB      Type = "scylladb"
+	TypeDbDynamoDB      Type = "dynamodb"
+	TypeDbFirebolt      Type = "firebolt"
 )
 
 var AllType = []struct {
@@ -121,6 +126,7 @@ var AllType = []struct {
 	{TypeDbSnowflake, "TypeDbSnowflake"},
 	{TypeDbDatabricks, "TypeDbDatabricks"},
 	{TypeDbSQLite, "TypeDbSQLite"},
+	{TypeDbDBase, "TypeDbDBase"},
 	{TypeDbD1, "TypeDbD1"},
 	{TypeDbDuckDb, "TypeDbDuckDb"},
 	{TypeDbDuckLake, "TypeDbDuckLake"},
@@ -132,8 +138,10 @@ var AllType = []struct {
 	{TypeDbTrino, "TypeDbTrino"},
 	{TypeDbAthena, "TypeDbAthena"},
 	{TypeDbIceberg, "TypeDbIceberg"},
+	{TypeDbLanceDB, "TypeDbLanceDB"},
 	{TypeDbClickhouse, "TypeDbClickhouse"},
 	{TypeDbElasticsearch, "TypeDbElasticsearch"},
+	{TypeDbOpenSearch, "TypeDbOpenSearch"},
 	{TypeDbMongoDB, "TypeDbMongoDB"},
 	{TypeDbPrometheus, "TypeDbPrometheus"},
 	{TypeDbProton, "TypeDbProton"},
@@ -142,6 +150,8 @@ var AllType = []struct {
 	{TypeDbArrowDBC, "TypeDbArrowDBC"},
 	{TypeDbODBC, "TypeDbODBC"},
 	{TypeDbScyllaDB, "TypeDbScyllaDB"},
+	{TypeDbDynamoDB, "TypeDbDynamoDB"},
+	{TypeDbFirebolt, "TypeDbFirebolt"},
 }
 
 // ValidateType returns true is type is valid
@@ -153,6 +163,8 @@ func ValidateType(tStr string) (Type, bool) {
 		"mongodb+srv": TypeDbMongoDB,
 		"file":        TypeFileLocal,
 		"abfss":       TypeFileAzureABFS,
+		"dbf":         TypeDbDBase,
+		"foxpro":      TypeDbDBase,
 	}
 
 	if tMatched, ok := tMap[tStr]; ok {
@@ -163,7 +175,7 @@ func ValidateType(tStr string) (Type, bool) {
 	case
 		TypeApi,
 		TypeFileLocal, TypeFileS3, TypeFileAzure, TypeFileAzureABFS, TypeFileGoogle, TypeFileGoogleDrive, TypeFileSftp, TypeFileFtp, TypeFileDatabricksVolume,
-		TypeDbPostgres, TypeDbRedshift, TypeDbStarRocks, TypeDbMySQL, TypeDbMariaDB, TypeDbOracle, TypeDbBigQuery, TypeDbSnowflake, TypeDbDatabricks, TypeDbSQLite, TypeDbD1, TypeDbSQLServer, TypeDbAzure, TypeDbAzureDWH, TypeDbDuckDb, TypeDbDuckLake, TypeDbMotherDuck, TypeDbClickhouse, TypeDbTrino, TypeDbAthena, TypeDbIceberg, TypeDbMongoDB, TypeDbElasticsearch, TypeDbPrometheus, TypeDbAzureTable, TypeDbFabric, TypeDbExasol, TypeDbArrowDBC, TypeDbODBC, TypeDbScyllaDB:
+		TypeDbPostgres, TypeDbRedshift, TypeDbStarRocks, TypeDbMySQL, TypeDbMariaDB, TypeDbOracle, TypeDbBigQuery, TypeDbSnowflake, TypeDbDatabricks, TypeDbSQLite, TypeDbDBase, TypeDbD1, TypeDbSQLServer, TypeDbAzure, TypeDbAzureDWH, TypeDbDuckDb, TypeDbDuckLake, TypeDbMotherDuck, TypeDbClickhouse, TypeDbTrino, TypeDbAthena, TypeDbIceberg, TypeDbLanceDB, TypeDbMongoDB, TypeDbElasticsearch, TypeDbOpenSearch, TypeDbPrometheus, TypeDbAzureTable, TypeDbFabric, TypeDbExasol, TypeDbArrowDBC, TypeDbODBC, TypeDbScyllaDB, TypeDbDynamoDB, TypeDbFirebolt:
 		return t, true
 	}
 
@@ -193,6 +205,7 @@ func (t Type) DefPort() int {
 		TypeDbClickhouse:    9000,
 		TypeDbMongoDB:       27017,
 		TypeDbElasticsearch: 9200,
+		TypeDbOpenSearch:    9200,
 		TypeDbPrometheus:    9090,
 		TypeDbProton:        8463,
 		TypeDbDatabricks:    443,
@@ -200,6 +213,7 @@ func (t Type) DefPort() int {
 		TypeFileFtp:         21,
 		TypeFileSftp:        22,
 		TypeDbScyllaDB:      9042,
+		TypeDbFirebolt:      3473,
 	}
 	return connTypesDefPort[t]
 }
@@ -229,7 +243,7 @@ func (t Type) DBNameUpperCase() bool {
 func (t Type) Kind() Kind {
 	switch t {
 	case TypeDbPostgres, TypeDbRedshift, TypeDbStarRocks, TypeDbMySQL, TypeDbMariaDB, TypeDbOracle, TypeDbBigQuery, TypeDbBigTable,
-		TypeDbSnowflake, TypeDbDatabricks, TypeDbExasol, TypeDbSQLite, TypeDbD1, TypeDbSQLServer, TypeDbAzure, TypeDbClickhouse, TypeDbTrino, TypeDbAthena, TypeDbIceberg, TypeDbDuckDb, TypeDbDuckLake, TypeDbMotherDuck, TypeDbMongoDB, TypeDbElasticsearch, TypeDbPrometheus, TypeDbProton, TypeDbAzureTable, TypeDbFabric, TypeDbArrowDBC, TypeDbODBC, TypeDbScyllaDB:
+		TypeDbSnowflake, TypeDbDatabricks, TypeDbExasol, TypeDbSQLite, TypeDbDBase, TypeDbD1, TypeDbSQLServer, TypeDbAzure, TypeDbClickhouse, TypeDbTrino, TypeDbAthena, TypeDbIceberg, TypeDbLanceDB, TypeDbDuckDb, TypeDbDuckLake, TypeDbMotherDuck, TypeDbMongoDB, TypeDbElasticsearch, TypeDbOpenSearch, TypeDbPrometheus, TypeDbProton, TypeDbAzureTable, TypeDbFabric, TypeDbArrowDBC, TypeDbODBC, TypeDbScyllaDB, TypeDbDynamoDB, TypeDbFirebolt:
 		return KindDatabase
 	case TypeFileLocal, TypeFileHDFS, TypeFileS3, TypeFileAzure, TypeFileAzureABFS, TypeFileGoogle, TypeFileGoogleDrive, TypeFileSftp, TypeFileFtp, TypeFileHTTP, TypeFileDatabricksVolume, Type("https"):
 		return KindFile
@@ -247,7 +261,7 @@ func (t Type) IsDb() bool {
 // IsDb returns true if database connection
 func (t Type) IsNoSQL() bool {
 	switch t {
-	case TypeDbBigTable, TypeDbAzureTable, TypeDbMongoDB, TypeDbElasticsearch, TypeDbScyllaDB:
+	case TypeDbBigTable, TypeDbAzureTable, TypeDbMongoDB, TypeDbElasticsearch, TypeDbOpenSearch, TypeDbScyllaDB, TypeDbDynamoDB:
 		return true
 	}
 	return false
@@ -291,7 +305,7 @@ func (t Type) IsColumnStore() bool {
 		TypeDbSnowflake, TypeDbBigQuery,
 		TypeDbDuckDb, TypeDbDuckLake, TypeDbMotherDuck,
 		TypeDbRedshift, TypeDbDatabricks, TypeDbStarRocks,
-		TypeDbTrino, TypeDbAthena, TypeDbIceberg, TypeDbExasol,
+		TypeDbTrino, TypeDbAthena, TypeDbIceberg, TypeDbLanceDB, TypeDbExasol, TypeDbFirebolt,
 		TypeDbAzureDWH, TypeDbFabric,
 	)
 }
@@ -331,6 +345,7 @@ func (t Type) NameLong() string {
 		TypeDbD1:                 "DB - D1",
 		Type("db2"):              "DB - DB2",
 		TypeDbSQLite:             "DB - SQLite",
+		TypeDbDBase:              "DB - dBase",
 		TypeDbDuckDb:             "DB - DuckDB",
 		TypeDbDuckLake:           "DB - DuckLake",
 		TypeDbMotherDuck:         "DB - MotherDuck",
@@ -340,15 +355,19 @@ func (t Type) NameLong() string {
 		TypeDbTrino:              "DB - Trino",
 		TypeDbAthena:             "DB - Athena",
 		TypeDbIceberg:            "DB - Iceberg",
+		TypeDbLanceDB:            "DB - LanceDB",
 		TypeDbClickhouse:         "DB - Clickhouse",
 		TypeDbPrometheus:         "DB - Prometheus",
 		TypeDbElasticsearch:      "DB - Elasticsearch",
+		TypeDbOpenSearch:         "DB - OpenSearch",
 		TypeDbMongoDB:            "DB - MongoDB",
 		TypeDbProton:             "DB - Proton",
 		TypeDbAzureTable:         "DB - Azure Table",
 		TypeDbArrowDBC:           "DB - Arrow DBC",
 		TypeDbODBC:               "DB - ODBC",
 		TypeDbScyllaDB:           "DB - ScyllaDB",
+		TypeDbDynamoDB:           "DB - DynamoDB",
+		TypeDbFirebolt:           "DB - Firebolt",
 	}
 
 	return mapping[t]
@@ -384,6 +403,7 @@ func (t Type) Name() string {
 		TypeDbD1:                 "D1",
 		Type("db2"):              "DB2",
 		TypeDbSQLite:             "SQLite",
+		TypeDbDBase:              "dBase",
 		TypeDbDuckDb:             "DuckDB",
 		TypeDbDuckLake:           "DuckLake",
 		TypeDbMotherDuck:         "MotherDuck",
@@ -391,9 +411,11 @@ func (t Type) Name() string {
 		TypeDbTrino:              "Trino",
 		TypeDbAthena:             "Athena",
 		TypeDbIceberg:            "Iceberg",
+		TypeDbLanceDB:            "LanceDB",
 		TypeDbClickhouse:         "Clickhouse",
 		TypeDbPrometheus:         "Prometheus",
 		TypeDbElasticsearch:      "Elasticsearch",
+		TypeDbOpenSearch:         "OpenSearch",
 		TypeDbMongoDB:            "MongoDB",
 		TypeDbFabric:             "Fabric",
 		TypeDbAzure:              "Azure",
@@ -401,6 +423,8 @@ func (t Type) Name() string {
 		TypeDbAzureTable:         "Azure Table",
 		TypeDbArrowDBC:           "Arrow DBC",
 		TypeDbODBC:               "ODBC",
+		TypeDbDynamoDB:           "DynamoDB",
+		TypeDbFirebolt:           "Firebolt",
 	}
 
 	return mapping[t]
